@@ -18,7 +18,7 @@ Tracking running habits in a spreadsheet works, but it's hard to spot patterns. 
 
 ## Who It's For
 
-A single user (the repo owner) who wants a private, free, lightweight running tracker. It's not designed for teams, public use, or integration with fitness devices like Strava or Garmin.
+A single user (the repo owner) who wants a private, free, lightweight running tracker with automatic Strava integration.
 
 ## Where It Fits in the Bigger System
 
@@ -28,10 +28,10 @@ A single user (the repo owner) who wants a private, free, lightweight running tr
 │  (hosts the     │─────▶│  (the "server" that   │─────▶│  (the database   │
 │   React app)    │ HTTP │   reads/writes data)  │      │   storing runs)  │
 └─────────────────┘      └──────────────────────┘      └──────────────────┘
-     ▲
-     │ User opens website in browser
-     │
-   [User]
+     ▲                          ▲
+     │ User opens website       │ Polls every 10 min
+     │                          │
+   [User]                  [Strava API]
 ```
 
 | Component | Where it runs | Cost |
@@ -39,8 +39,9 @@ A single user (the repo owner) who wants a private, free, lightweight running tr
 | React app (this repo) | GitHub Pages (static file hosting) | Free |
 | Google Apps Script | Google's servers (runs as a "web app") | Free |
 | Google Sheets | Google Drive | Free |
+| Strava API | Strava's servers (polled by Apps Script) | Free |
 
-There is no Kubernetes, no cloud database, no Docker — everything runs on free-tier Google and GitHub services.
+There is no Kubernetes, no cloud database, no Docker — everything runs on free-tier Google, GitHub, and Strava services.
 
 ## Main Technologies Used
 
@@ -52,7 +53,8 @@ There is no Kubernetes, no cloud database, no Docker — everything runs on free
 | **React Router v6** | Client-side routing library | Handles navigation between Dashboard (`/`) and Activities (`/activities`) pages without full page reloads |
 | **Recharts** | A React charting library built on D3 | Renders the 3 bar charts (days/minutes/km per month) |
 | **HashRouter** | A variant of React Router that uses `#` in URLs (e.g., `site.com/#/activities`) | Required because GitHub Pages can't handle client-side routing — it only serves `index.html` for the root path |
-| **Google Apps Script** | Google's server-side JavaScript platform attached to Google Sheets | Acts as the REST API — receives HTTP requests, reads/writes the Google Sheet, returns JSON |
+| **Google Apps Script** | Google's server-side JavaScript platform attached to Google Sheets | Acts as the REST API — receives HTTP requests, reads/writes the Google Sheet, returns JSON. Also polls Strava API on a timer. |
+| **Strava API** | Strava's REST API for accessing athlete activities | Polled every 10 minutes by Apps Script to auto-sync new runs |
 | **gh-pages** | An npm package that deploys a folder to a `gh-pages` branch | One-command deployment: `npm run deploy` pushes the built site to GitHub Pages |
 
 ## High-Level Architecture
@@ -65,12 +67,14 @@ There is no Kubernetes, no cloud database, no Docker — everything runs on free
 4. **Google Apps Script** → Validates the API key, reads rows from the Google Sheet, returns JSON
 5. **React renders** → The data is passed to Heatmap, StatsCards, and BarCharts components
 6. **User logs a run** → Form submits → Confirmation dialog → HTTP POST to Apps Script → New row in Google Sheet → UI refreshes
+7. **Strava auto-sync** → Every 10 minutes, Apps Script polls Strava API → Fetches recent activities → Filters for runs only → Skips duplicates → Adds new rows to Google Sheet
 
 ### Security Layers (3 layers, all simple)
 
 1. **Private GitHub repo** — nobody can see the source code or the API key
 2. **Password prompt** — blocks access to the site UI (password: checked against a hardcoded value in `config.js`)
 3. **API key** — sent with every request to Google Apps Script, which rejects requests without a valid key
+4. **Strava credentials** — stored in Google Apps Script's `PropertiesService` (server-side, encrypted at rest, never exposed to frontend)
 
 > **Note:** This is "good enough" security for a personal project. The password and API key are stored in plain text in `config.js`. Since the repo is private and the site is only for one person, this is acceptable. For a production app serving many users, you'd use proper authentication (OAuth, JWT tokens, etc.).
 
@@ -127,6 +131,19 @@ main.jsx
 ### The Google Apps Script side (not deployed from this repo):
 
 The file `google-apps-script/Code.gs` is a reference file. You don't deploy it from this repo — you paste its contents into the Google Apps Script editor (accessed from Extensions → Apps Script inside your Google Sheet). It runs on Google's servers and acts as the "backend API."
+
+### Strava Integration (server-side only):
+
+The Strava auto-sync runs entirely within Google Apps Script — no frontend changes needed. Key functions:
+
+| Function | Purpose | How to run |
+|---|---|---|
+| `setupStravaCredentials()` | Store Strava API credentials in PropertiesService | Run once manually in Apps Script editor |
+| `installStravaTrigger()` | Create a time-based trigger that polls every 10 min | Run once manually in Apps Script editor |
+| `pollStravaActivities()` | Fetch recent Strava runs and add to sheet | Runs automatically via trigger |
+| `removeStravaTrigger()` | Stop the auto-sync | Run manually if needed |
+
+See `STRAVA_SETUP.md` for the full setup guide.
 
 ## Developer Workflow
 
@@ -327,7 +344,7 @@ The API functions already pass through the entire `data` object, so `notes` will
 | **No tests** | Bugs are caught manually. No `jest`, `vitest`, or testing-library in `package.json`. | No test files exist anywhere in the project |
 | **No linting or formatting** | Code style depends on the developer. No `eslint` or `prettier` configured. | No `.eslintrc`, `.prettierrc`, or lint scripts in `package.json` |
 | **No TypeScript** | No compile-time type checking. `@types/react` packages are installed but unused (editor hints only). | All files are `.js` / `.jsx`, no `tsconfig.json` |
-| **`Code.gs` is empty in the repo** | The actual backend code lives only in the Google Apps Script editor. If the Apps Script is deleted or the Google account is lost, the backend is gone. | `google-apps-script/Code.gs` is 0 bytes |
+| **`Code.gs` is a reference copy** | The actual backend code lives in the Google Apps Script editor. The repo copy should be kept in sync manually. | `google-apps-script/Code.gs` |
 | **Credentials in source code** | API key and password are hardcoded in `config.js`. Safe only because the repo is private. | `src/config.js` contains plain-text credentials |
 | **No error retry or offline support** | If the Google Apps Script is down or slow, the app just shows an error. No retry logic, no caching, no service worker. | `api.js` throws on failure, `Dashboard.jsx` catches and shows error text |
 
