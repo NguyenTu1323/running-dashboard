@@ -17,9 +17,9 @@ React 18 SPA hosted on GitHub Pages, using Google Sheets as a database via Googl
 
 ```
 User → GitHub Pages (React SPA) → Google Apps Script API → Google Sheets
-              ↑
-     Password gate (sessionStorage)
-     API key on every request
+              ↑                                                  ↑
+     Password gate (sessionStorage)                    Strava API (polling)
+     API key on every request                    (auto-sync every 10 minutes)
 ```
 
 - **Routing**: HashRouter (not BrowserRouter) — required for GitHub Pages compatibility
@@ -33,6 +33,19 @@ User → GitHub Pages (React SPA) → Google Apps Script API → Google Sheets
 - `src/api.js` — CRUD functions with date normalization
 - `src/dateUtils.js` — `parseDate()` helper for timezone-safe date string parsing
 - `google-apps-script/Code.gs` — Backend code (pasted into Google Apps Script editor, not deployed from here)
+- `STRAVA_SETUP.md` — Step-by-step guide for Strava auto-sync setup
+
+### Strava Auto-Sync
+
+Runs are automatically synced from Strava via a polling mechanism in Google Apps Script (no webhook, no proxy needed).
+
+- **How it works**: A time-based trigger in Apps Script polls the Strava API every 10 minutes for new runs
+- **Filtering**: Only `Run` type activities are synced (rides, swims, etc. are skipped)
+- **Duplicates**: Skipped based on matching date + km
+- **Credentials**: Strava API credentials (client_id, client_secret, refresh_token) are stored in `PropertiesService` (server-side, never exposed to frontend)
+- **Key functions in Code.gs**: `pollStravaActivities()`, `installStravaTrigger()`, `removeStravaTrigger()`, `setupStravaCredentials()`
+- **No frontend changes needed** — the dashboard reads from the same Google Sheet regardless of how data gets there
+- **GAS limitation**: Google Apps Script returns 302 redirects for web app URLs, which prevents Strava webhooks from working directly. Polling is the workaround.
 
 ### Critical Pattern: Date Handling
 
